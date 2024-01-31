@@ -1,0 +1,14 @@
+tqdm
+numpy
+datasets
+OpenAttack
+transformers
+adapter-transformers
+torch
+accelerate
+wandb
+captum
+lime
+ipykernel
+ipywidgets
+scikit-learn-intelex
