@@ -300,10 +300,16 @@ def get_dataloader_and_model(config, dataset_config, tokenizer, return_simulate_
             if return_eval_dataloader:
                 eval_dataloader = DataLoader(eval_dataset, collate_fn=data_collator, batch_size=config.eval_test_batch_size)
 
-        from transformers import BertModelWithHeads
-        teacher_model = BertModelWithHeads.from_pretrained("bert-base-uncased")
-        adapter_name = teacher_model.load_adapter(config.adapter_name, source="hf")
-        teacher_model.set_active_adapters(adapter_name)
+        try:
+            from transformers import BertModelWithHeads
+            teacher_model = BertModelWithHeads.from_pretrained("bert-base-uncased")
+            adapter_name = teacher_model.load_adapter(config.adapter_name, source="hf")
+            teacher_model.set_active_adapters(adapter_name)
+        except ImportError:
+            from adapters import AutoAdapterModel
+            teacher_model = AutoAdapterModel.from_pretrained("bert-base-uncased")
+            teacher_model.load_adapter(config.adapter_name, source="hf", set_active=True)
+
 
     elif config.data_set_name in ["snli"]:
         if return_simulate_dataloader or return_eval_dataloader:

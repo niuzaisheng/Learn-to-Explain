@@ -26,6 +26,7 @@ input_feature_shape_dict = {
     "effective_information": 1,
     "gradient": 2,
     "gradient_input": 2,
+    "hidden_states": 2,
     "mixture": 2,
 }
 
@@ -131,8 +132,10 @@ def get_const_attention_features(model_outputs, bins_num):
     return torch.ones((batch_size, max_seq_len, 2 * bins_num + 4), device=target_device)
 
 
-def get_EI_attention_features(model_outputs, batch_seq_len):
+def get_EI_attention_features(model_outputs, batch_seq_len, selected_layers=None):
     batch_attentions = model_outputs.attentions
+    if selected_layers is not None:
+        batch_attentions = [batch_attentions[i] for i in selected_layers]
     attentions = torch.cat([torch.mean(layer, dim=1, keepdim=True) for layer in batch_attentions], dim=1)
     attentions = attentions.mean(1).detach().cpu()
     batch_size, max_seq_len, _ = attentions.size()
@@ -148,9 +151,11 @@ def get_EI_attention_features(model_outputs, batch_seq_len):
     return batch_ei_features
 
 
-def get_attention_features(model_outputs, attention_mask, batch_seq_len, bins_num):
+def get_attention_features(model_outputs, attention_mask, batch_seq_len, bins_num, selected_layers=None):
     # statistical_bin
     batch_attentions = model_outputs.attentions
+    if selected_layers is not None:
+        batch_attentions = [batch_attentions[i] for i in selected_layers]
     attentions = torch.cat([torch.mean(layer, dim=1, keepdim=True) for layer in batch_attentions], dim=1)
     attentions = attentions.mean(1).detach()
     batch_size, max_seq_len, _ = attentions.size()
@@ -234,7 +239,16 @@ def use_original_embedding_as_features(transformer_model, post_batch):
         input_embedding = embedding_saver[0]
     return input_embedding.detach(), model_outputs
 
-def get_mixture_features(transformer_model, post_batch, original_pred_labels, seq_length, bins_num):
+def get_hidden_states_features(model_outputs, selected_layers=None):
+    # mean across layers
+    hidden_states = model_outputs.hidden_states[1:]  # remove embedding layer
+    if selected_layers is not None:
+        hidden_states = torch.stack([hidden_states[i] for i in selected_layers], dim=2)
+    else:
+        hidden_states = torch.stack(hidden_states, dim=2)
+    return hidden_states.mean(2).detach()  # [batch_size, seq_len, model_rep_dim]
+
+def get_mixture_features(transformer_model, post_batch, original_pred_labels, seq_length, bins_num, selected_layers=None):
     # mixture of original_embedding, statistical_bin, and gradient features
     transformer_model.zero_grad()
     original_pred_labels = original_pred_labels.view(-1)
@@ -251,7 +265,7 @@ def get_mixture_features(transformer_model, post_batch, original_pred_labels, se
     
     with torch.no_grad():
         embedding_features = input_embedding.detach() # [batch_size, seq_len, model_rep_dim]
-        attention_features = get_attention_features(model_outputs, post_batch["attention_mask"], seq_length, bins_num) # [batch_size, seq_len, bins_num * 2 + 4]
+        attention_features = get_attention_features(model_outputs, post_batch["attention_mask"], seq_length, bins_num, selected_layers) # [batch_size, seq_len, bins_num * 2 + 4]
         grads_features = grads.detach() # [batch_size, seq_len, model_rep_dim]
 
     # mixture of original_embedding, statistical_bin, and gradient features

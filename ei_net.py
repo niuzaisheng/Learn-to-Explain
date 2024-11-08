@@ -26,7 +26,7 @@ def check_network(G):
     """
 
     if type(G) == np.ndarray:
-        G = nx.from_numpy_matrix(G, create_using=nx.DiGraph())
+        G = nx.from_numpy_array(G, create_using=nx.DiGraph())
 
     if type(G) == nx.classes.graph.Graph:
         G = nx.DiGraph(G)

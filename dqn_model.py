@@ -202,7 +202,7 @@ class DQN(object):
         ModelClass = None
         if config.features_type in ["gradient", "gradient_input"]:
             ModelClass = DQNNet4Grad
-        elif config.features_type == "original_embedding":
+        elif config.features_type in ["original_embedding", "hidden_states"]:
             ModelClass = DQNNet2D
         elif config.features_type == "input_ids":
             ModelClass = DQNNetEmbedding

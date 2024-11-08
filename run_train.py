@@ -47,7 +47,8 @@ def parse_args():
     parser.add_argument("--features_type", type=str, default="statistical_bin",
                         choices=["const", "random", "input_ids", "original_embedding",
                                  "statistical_bin", "effective_information",
-                                 "gradient", "gradient_input", "mixture"])
+                                 "gradient", "gradient_input", "hidden_states", "mixture"])
+    parser.add_argument("--selected_layers", type=int, nargs="+", default=None)
     parser.add_argument("--done_threshold", type=float, default=0.8)
     parser.add_argument("--do_pre_deletion", action="store_true", default=False, help="Pre-deletion of misclassified samples")
     parser.add_argument("--token_replacement_strategy", type=str, default="mask", choices=["mask", "delete"])
@@ -82,7 +83,12 @@ logger.info(f"Eval config: {config}")
 set_seed(config.seed)
 
 dt = datetime.datetime.now().strftime("%Y-%m-%d-%I-%M-%S")
-exp_name = f"{config.data_set_name}_{dt}"
+exp_name = f"{config.data_set_name}_{config.task_type}_{config.features_type}_{config.token_replacement_strategy}"
+if config.selected_layers is not None:
+    selected_layers_str = "_".join([str(layer) for layer in config.selected_layers])
+    exp_name = f"{exp_name}_{selected_layers_str}"
+exp_name = f"{exp_name}_{dt}"
+
 save_file_dir = f"saved_weights/{exp_name}"
 
 dataset_config = get_dataset_config(config)
@@ -95,7 +101,6 @@ token_quantity_correction = dataset_config["token_quantity_correction"]  # the n
 # For DQN gather single step data into batch from replay buffer
 # input_feature_shape indicates how many dimensions along sequence length
 input_feature_shape = input_feature_shape_dict[config.features_type]
-
 
 if config.use_wandb:
     import wandb
@@ -114,6 +119,17 @@ logger.info("One example:")
 for _, batch in enumerate(simulate_dataloader):
     logger.info(batch)
     break
+
+# check if the selected_layers is valid
+max_layers = transformer_model.config.num_hidden_layers
+selected_layers = config.selected_layers
+if selected_layers is not None:
+    if not isinstance(selected_layers, list):
+        raise ValueError("selected_layers should be a list.")
+    if not all(isinstance(layer, int) for layer in selected_layers):
+        raise ValueError("All elements in selected_layers should be integers.")
+    if not all(0 <= layer < max_layers for layer in selected_layers):
+        raise ValueError(f"All layer numbers should be between 0 and {max_layers - 1}.")
 
 
 def record_results(completed_steps, transformer_model, trackers, finished_index, post_batch,
@@ -184,8 +200,9 @@ def get_rewards(original_seq_length=None,
     )
 
 
-def one_step(transformer_model, original_pred_labels, post_batch, seq_length, bins_num, lm_device, dqn_device, features_type):
+def one_step(transformer_model, original_pred_labels, post_batch, seq_length, lm_device, dqn_device, selected_layers=None):
 
+    features_type = config.features_type
     post_batch = send_to_device(post_batch, lm_device)
     if features_type == "gradient":
         extracted_features, post_outputs = get_gradient_features(transformer_model, post_batch, original_pred_labels, times_input=False)
@@ -194,22 +211,26 @@ def one_step(transformer_model, original_pred_labels, post_batch, seq_length, bi
     elif features_type == "original_embedding":
         extracted_features, post_outputs = use_original_embedding_as_features(transformer_model, post_batch)
     elif features_type == "mixture":
-        extracted_features, post_outputs = get_mixture_features(transformer_model, post_batch, original_pred_labels, seq_length, bins_num)
+        extracted_features, post_outputs = get_mixture_features(transformer_model, post_batch, original_pred_labels, seq_length, config.bins_num)
     else:
         with torch.no_grad():
-            post_outputs = transformer_model(**post_batch, output_attentions=True)
-            if features_type == "statistical_bin":
-                extracted_features = get_attention_features(post_outputs, post_batch["attention_mask"], seq_length, bins_num)
-            elif features_type == "const":
-                extracted_features = get_const_attention_features(post_outputs, config.bins_num)
-            elif features_type == "random":
-                extracted_features = get_random_attention_features(post_outputs, config.bins_num)
-            elif features_type == "effective_information":
-                extracted_features = get_EI_attention_features(post_outputs, seq_length)
-            elif features_type == "input_ids":
-                extracted_features = post_batch["input_ids"]
+            if features_type=="hidden_states":
+                post_outputs = transformer_model(**post_batch, output_hidden_states=True)
+                extracted_features = get_hidden_states_features(post_outputs, selected_layers=selected_layers)
             else:
-                raise NotImplementedError(f"features_type {features_type} not implemented")
+                post_outputs = transformer_model(**post_batch, output_attentions=True)
+                if features_type == "statistical_bin":
+                    extracted_features = get_attention_features(post_outputs, post_batch["attention_mask"], seq_length, config.bins_num, selected_layers=selected_layers)
+                elif features_type == "const":
+                    extracted_features = get_const_attention_features(post_outputs, config.bins_num)
+                elif features_type == "random":
+                    extracted_features = get_random_attention_features(post_outputs, config.bins_num)
+                elif features_type == "effective_information":
+                    extracted_features = get_EI_attention_features(post_outputs, seq_length, selected_layers=selected_layers)
+                elif features_type == "input_ids":
+                    extracted_features = post_batch["input_ids"]
+                else:
+                    raise NotImplementedError(f"features_type {features_type} not implemented")
 
     post_acc, post_pred_labels, post_prob = batch_accuracy(post_outputs, original_pred_labels, device=dqn_device)
     # post_logits = batch_logits(post_outputs, original_pred_labels, device=dqn_device)
@@ -280,16 +301,16 @@ for epoch in range(config.max_train_epoch):
         original_seq_length = copy.deepcopy(seq_length)
 
         actions, now_game_status = dqn.initial_action(batch, special_tokens_mask, seq_length, batch_max_seq_length, dqn.device)
-        now_features, post_acc, post_prob, post_pred_labels = one_step(transformer_model, original_pred_labels, batch, seq_length, config.bins_num,
-                                                                       lm_device=lm_device, dqn_device=dqn.device, features_type=config.features_type)
+        now_features, post_acc, post_prob, post_pred_labels = one_step(transformer_model, original_pred_labels, batch, seq_length,
+                                                                       lm_device=lm_device, dqn_device=dqn.device, selected_layers=selected_layers)
 
         batch_done_step = []
 
         for game_step in range(config.max_game_steps):
 
             post_batch, actions, next_game_status, next_special_tokens_mask = dqn.choose_action(batch, seq_length, special_tokens_mask, now_features, now_game_status)
-            next_features, post_acc, post_prob, post_pred_labels = one_step(transformer_model, original_pred_labels, post_batch, seq_length, config.bins_num,
-                                                                            lm_device=lm_device, dqn_device=dqn.device, features_type=config.features_type)
+            next_features, post_acc, post_prob, post_pred_labels = one_step(transformer_model, original_pred_labels, post_batch, seq_length,
+                                                                            lm_device=lm_device, dqn_device=dqn.device, selected_layers=selected_layers)
 
             r = get_rewards(original_seq_length=original_seq_length, original_acc=original_acc, original_prob=original_prob, post_acc=post_acc, post_prob=post_prob, game_status=next_game_status)
 

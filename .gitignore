@@ -1,3 +1,10 @@
+
+batch_train.sh
+.vscode/
+wandb/
+saved_weights/
+logs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
