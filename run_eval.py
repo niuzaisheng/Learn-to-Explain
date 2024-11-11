@@ -292,7 +292,7 @@ for step, batch in enumerate(eval_dataloader):
     # initial batch. In game_status, 1 the token is visible to the model, 0 is invisible to the model.
     actions, now_game_status = dqn.initial_action(batch, special_tokens_mask, seq_length, batch_max_seq_length, dqn.device)
     now_features, post_acc, post_pred_labels, post_prob, post_logits, post_loss = one_step(transformer_model, original_pred_labels, batch, seq_length, config,
-                                                                                           lm_device=lm_device, dqn_device=dqn.device)
+                                                                                           lm_device=lm_device, dqn_device=dqn.device, selected_layers=selected_layers)
     for game_step in range(epoch_game_steps):
         game_step_progress_bar.update()
         game_step_progress_bar.set_postfix({"left_examples": batch_size})

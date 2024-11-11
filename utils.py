@@ -389,7 +389,7 @@ def compute_salient_desc_auc(transformer_model, tracker,
         mask_map = torch.zeros_like(masked_input_ids)
         mask_map[0, sorted_saliency[0:mask_token_num]] = 1
         mask_map.masked_fill_(special_tokens_mask, 0)
-        masked_input_ids.masked_fill_(mask_map, mask_token_id)
+        masked_input_ids.masked_fill_(mask_map.bool(), mask_token_id)
         masked_input_ids = send_to_device(masked_input_ids, lm_device)
         token_type_ids = send_to_device(token_type_ids, lm_device)
         attention_mask = send_to_device(attention_mask, lm_device)
@@ -444,7 +444,7 @@ def compute_modified_order_auc(transformer_model, tracker,
         mask_map = torch.zeros_like(masked_input_ids)
         mask_map[0, modified_index_order[0:mask_token_num]] = 1
         mask_map.masked_fill_(special_tokens_mask, 0)
-        masked_input_ids.masked_fill_(mask_map, mask_token_id)
+        masked_input_ids.masked_fill_(mask_map.bool(), mask_token_id)
         masked_input_ids = send_to_device(masked_input_ids, lm_device)
         token_type_ids = send_to_device(token_type_ids, lm_device)
         attention_mask = send_to_device(attention_mask, lm_device)
